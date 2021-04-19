@@ -6,7 +6,25 @@
  */
 
  // Project includes
-#include "FOPIDControllerPrototypeMarkII.h"
+#include "FOPIDControllerPrototypeMarkII.h"\
+
+// Socket communication related
+#include<stdio.h>
+
+// NB! Socket now working on WINDOWS ONLY
+#include<winsock2.h>
+#include<ws2tcpip.h>
+
+#pragma comment(lib,"ws2_32.lib") //Winsock Library
+
+#pragma warning(disable:4996) 
+
+// ---
+
+#define MATLAB_SERVER "127.0.0.1" //IP address of MATLAB server
+#define MATLAB_BUFLEN 128         //Max length of buffer
+#define MATLAB_PORT 5110          //The port on which to listen for incoming data
+#define MATLAB_FROM_PORT 5101     // Send to here
 
 
 // Implementation specific defines
@@ -77,7 +95,8 @@ volatile double in_Mem = 0;		 // Previous sample
 // FOPID controller parameters: defaults to regular PID controller with direct feed-through
 volatile fopid the_fopid = { 1, 0, 0, 1, 1 };
 
-
+// SOCKET RELATED
+volatile int sock = -1;
 
 // The FOPID for which parameters are sought
 volatile fopid und_fopid = { 1, 0, 0, 1, 1 };
@@ -110,12 +129,14 @@ uint8_t numIters = 0;
 #define ACTIVATE_TUNING 0
 
 
+void on_exit(void) {
+	if (sock != -1) {
+		closesocket(sock);
+		WSACleanup();
+	}
+}
 
-
-//example main
-
-
-
+// Basic example of a main function
 int main(void)
 {
 
@@ -157,8 +178,70 @@ int main(void)
 	// Generate the FOPID controller
 	Generate_FOPID_Controller();
 
+	// We assume UDP based communication with the controller
+	// and that the sender of UDP data will take care of the timing
+	// This can be considered suboptimal, but for the sake of simplicity
+	// and because we are using MATLAB for SIL/HIL experiments, this
+	// is good enough for initial tests.
+
+	// Here we are using code from
+    // https://www.binarytides.com/udp-socket-programming-in-winsock/
+	// as an example implementation of a C UDP client. This is Windows only.
+	// For unix based systems, consider this one:
+	// https://www.cs.cmu.edu/afs/cs/academic/class/15213-f99/www/class26/udpclient.c
+
+	/* **********************
+	// BEGIN UDP CLIENT SETUP
+	// ********************** */
+
+	struct sockaddr_in si_other;
+	int slen = sizeof(si_other);
+	char buf[MATLAB_BUFLEN];
+	char message[8];
+	WSADATA wsa;
+
+	//Initialise winsock
+	printf("\nInitialising Winsock...");
+	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+	{
+		printf("Failed. Error Code : %d", WSAGetLastError());
+		exit(EXIT_FAILURE);
+	}
+	printf("Initialised.\n");
+
+	//create socket
+	if ((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == SOCKET_ERROR)
+	{
+		printf("socket() failed with error code : %d", WSAGetLastError());
+		exit(EXIT_FAILURE);
+	}
+
+	//setup address structure
+	memset((char*)&si_other, 0, sizeof(si_other));
+	si_other.sin_family = AF_INET;
+	si_other.sin_port = htons(MATLAB_PORT);
+	si_other.sin_addr.S_un.S_addr = inet_addr(MATLAB_SERVER);
+
+	// Other
+	struct sockaddr_in si_out;
+	memset((char*)&si_out, 0, sizeof(si_out));
+	int olen = sizeof si_out;
+	si_out.sin_family = AF_INET;
+	si_out.sin_port = htons(MATLAB_FROM_PORT);
+	si_out.sin_addr.S_un.S_addr = inet_addr(MATLAB_SERVER);
+
+	// bind
+	bind(sock, (SOCKADDR*)&si_other, sizeof(si_other));
+
+	atexit(on_exit); // Need to clean up on exit
+
+	/* ********************
+	// END UDP CLIENT SETUP
+	// ******************** */
+
 	while (1)
 	{
+		// TODO: CODE BELOW UNTIL first "memset" is useless right now
 		// If a FOPID generation has been scheduled,
 		if (flag_FOPID_Schedule_Generation)
 		{
@@ -170,28 +253,36 @@ int main(void)
 				flag_FOPID_Schedule_Generation = 0;
 			}
 		}
+
+		memset(buf, '\0', MATLAB_BUFLEN);
+		//try to receive some data, this is a blocking call
+		if (recvfrom(sock, buf, MATLAB_BUFLEN, 0, (struct sockaddr*)&si_other, &slen) == SOCKET_ERROR)
+		{
+			printf("recvfrom() failed with error code : %d", WSAGetLastError());
+			exit(EXIT_FAILURE);
+		}
+
+		// Convert received value to double (ASSUME it is double and in Little Endian format)
+		double err = 0;
+		memcpy(&err, buf, sizeof err);
+
+		// Do FOPID control on ERR
+		double u = Do_FOPID_Control(err);
+
+		printf("Cur value of u: %f\n", u);
+
+		// Send value back
+		memcpy(&message, &u, sizeof u);
+		if (sendto(sock, message, sizeof message, 0, (struct sockaddr*)&si_out, olen) == SOCKET_ERROR)
+		{
+			printf("sendto() failed with error code : %d", WSAGetLastError());
+			exit(EXIT_FAILURE);
+		}
+
 	}
+
+
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 // ********************************
