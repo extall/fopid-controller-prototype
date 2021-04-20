@@ -8,11 +8,11 @@ UDP_PORT_CTRL = 5201
 confs = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # Set the parameters here to test and send them using the socket
-Kp = -0.002934
-Ki = 0.01030
-Kd = 0.05335
-lam = 0.9
-mu = 0.5
+Kp = -0.01
+Ki = 0.25
+Kd = 0.05
+lam = 0.8
+mu = 0.6
 
 # NB! Parameter order is important! "c" means change FOPID parameters
 msg = pack("<cddddd", "c".encode('ascii'), Kp, Ki, Kd, lam, mu)

@@ -8,6 +8,8 @@
  // Project includes
 #include "FOPIDControllerPrototypeMarkII.h"\
 
+#include<assert.h>
+
 // Socket communication related
 #include<stdio.h>
 
@@ -126,7 +128,7 @@ double kappa_vec[3] = { 0 };
 // DEBUG: iterations
 uint8_t numIters = 0;
 
-#define ACTIVATE_TUNING 0
+#define ACTIVATE_TUNING 1
 
 
 void on_exit(void) {
@@ -146,22 +148,22 @@ int main(void)
 	the_fofopdt.T = 12.72;
 	the_fofopdt.alpha = 0.5;
 
-	the_fopid.Kp = -0.002934;
-	the_fopid.Ki = 0.01030;
-	the_fopid.Kd = 0.05335;
-	the_fopid.lambda = 0.9;
-	the_fopid.mu = 0.5;
+	the_fopid.Kp = -0.01;
+	the_fopid.Ki = 0.25;
+	the_fopid.Kd = 0.05;
+	the_fopid.lambda = 0.8;
+	the_fopid.mu = 0.6;
 
 	// Controller parameters to be tuned
 	und_fopid.Kp = 1 / the_fofopdt.K;
 	und_fopid.Ki = 1 / the_fofopdt.K;
 	und_fopid.Kd = 1 / the_fofopdt.K;
-	und_fopid.lambda = 0.9;
-	und_fopid.mu = 0.5;
+	und_fopid.lambda = 0.8;
+	und_fopid.mu = 0.4;
 
 	// Specifications
-	dspecs.wc = 0.1;
-	dspecs.pm = (60 * M_PI) / 180; // Convert to radians
+	dspecs.wc = 0.15;
+	dspecs.pm = (75 * M_PI) / 180; // Convert to radians
 	dspecs.opt_norm = 0.001; // Optimization termination criterion
 
 	// Set approximation parameters and generate a FOPID controller
@@ -173,6 +175,13 @@ int main(void)
 	// If ACTIVATE_TUNING is on, use do the tuning here
 	if (ACTIVATE_TUNING) {
 		Do_FOPID_Optimization();
+
+		// Assign new parameters
+		the_fopid.Kp = und_fopid.Kp;
+		the_fopid.Ki = und_fopid.Ki;
+		the_fopid.Kd = und_fopid.Kd;
+		the_fopid.lambda = und_fopid.lambda;
+		the_fopid.mu = und_fopid.mu;
 	}
 
 	// Generate the FOPID controller
@@ -187,7 +196,7 @@ int main(void)
 	// Here we are using code from
     // https://www.binarytides.com/udp-socket-programming-in-winsock/
 	// as an example implementation of a C UDP client. This is Windows only.
-	// For unix based systems, consider this one:
+	// For *nix GNU GCC compatible systems, consider this one:
 	// https://www.cs.cmu.edu/afs/cs/academic/class/15213-f99/www/class26/udpclient.c
 
 	/* **********************
@@ -241,7 +250,7 @@ int main(void)
 
 	while (1)
 	{
-		// TODO: CODE BELOW UNTIL first "memset" is useless right now
+		// TODO: BEGIN useless code
 		// If a FOPID generation has been scheduled,
 		if (flag_FOPID_Schedule_Generation)
 		{
@@ -253,7 +262,10 @@ int main(void)
 				flag_FOPID_Schedule_Generation = 0;
 			}
 		}
+		// END useless code
 
+		// Will wait for the server to send the "error" value.
+		// Will then use that to compute the corresponding control law.
 		memset(buf, '\0', MATLAB_BUFLEN);
 		//try to receive some data, this is a blocking call
 		if (recvfrom(sock, buf, MATLAB_BUFLEN, 0, (struct sockaddr*)&si_other, &slen) == SOCKET_ERROR)
@@ -262,14 +274,12 @@ int main(void)
 			exit(EXIT_FAILURE);
 		}
 
-		// Convert received value to double (ASSUME it is double and in Little Endian format)
+		// Convert received value to double (we ***assume*** it is double and in Little Endian format)
 		double err = 0;
 		memcpy(&err, buf, sizeof err);
 
-		// Do FOPID control on ERR
+		// Do FOPID control on ERR signal
 		double u = Do_FOPID_Control(err);
-
-		printf("Cur value of u: %f\n", u);
 
 		// Send value back
 		memcpy(&message, &u, sizeof u);
@@ -360,6 +370,11 @@ void Compute_IIR_SOS_Oustaloup(volatile double zCoeffArray[][2], volatile double
 
 void Generate_FOPID_Controller()
 {
+
+	// Necessary checks of lambda and mu
+	assert(the_fopid.lambda >= 0 && the_fopid.lambda <= 1);
+	assert(the_fopid.mu >= 0 && the_fopid.mu <= 1);
+
 	// Reset FOPID_Ready flag
 	flag_FOPID_Ready = 0;
 
